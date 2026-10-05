@@ -727,6 +727,12 @@
   if (typeof module === 'object' && module.exports) module.exports = WebCraft;
 
   if (typeof document !== 'undefined') {
+    // When the spec sits in <head> before this script, apply the theme now — before the first
+    // paint — so dark sites never flash the default light colours.
+    const early = document.querySelector('script[type="application/json"][data-webcraft]');
+    if (early && document.readyState === 'loading') {
+      try { applyTheme(JSON.parse(early.textContent).theme); } catch (err) { /* auto() reports it */ }
+    }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', auto);
     else auto();
   }

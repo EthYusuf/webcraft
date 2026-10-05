@@ -458,7 +458,11 @@ def render_page(site: "Site", page: "Page", *, inline: bool = False, spec: Optio
     else:
         css = f'<link rel="stylesheet" href="{ASSETS_DIR}/webcraft.css">'
         js = f'<script src="{ASSETS_DIR}/webcraft.js"></script>'
-    head = "\n  ".join(part for part in [*meta, _font_links(spec["theme"]), css, *site.head_html] if part)
+    # Spec + library live in <head>: the theme is applied before the first paint (no light-theme flash),
+    # the page itself is rendered on DOMContentLoaded.
+    spec_tag = f'<script type="application/json" data-webcraft data-target="#app">{_safe_json(spec)}</script>'
+    head = "\n  ".join(part for part in [*meta, _font_links(spec["theme"]), css, spec_tag, js, *site.head_html]
+                       if part)
 
     return f"""<!doctype html>
 <html lang="{html.escape(site.lang)}">
@@ -472,8 +476,6 @@ def render_page(site: "Site", page: "Page", *, inline: bool = False, spec: Optio
 <body>
   <div id="app"></div>
   <noscript><p style="padding:2rem;text-align:center">Bu site JavaScript gerektirir. / This site requires JavaScript.</p></noscript>
-  <script type="application/json" data-webcraft data-target="#app">{_safe_json(spec)}</script>
-  {js}
 </body>
 </html>
 """
