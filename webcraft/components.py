@@ -7,11 +7,16 @@ container and returns ``self`` so calls can be chained::
 
 Common keyword options accepted by every component:
     id, background, color, padding, align, animate, class_, style
+
+``background`` may be a CSS colour/gradient string or a :class:`~webcraft.Background`
+(image + size/position/overlay/blur/parallax ...).
 """
 
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Optional, Sequence, Union
+
+from .background import Background, normalize_background
 
 LinkSpec = Union[Mapping[str, str], Sequence[Any], None]
 ButtonSpec = Union[str, Mapping[str, Any], Sequence[Any], None]
@@ -80,6 +85,14 @@ def _items(items: Any, keys: Sequence[str]) -> list[dict]:
     return out
 
 
+def _valid_aspect(value: str) -> bool:
+    parts = str(value).replace("/", ":").split(":")
+    try:
+        return len(parts) == 2 and float(parts[0]) > 0 and float(parts[1]) > 0
+    except ValueError:
+        return False
+
+
 def _common(opts: dict) -> dict:
     unknown = set(opts) - set(COMMON_OPTIONS)
     if unknown:
@@ -88,6 +101,8 @@ def _common(opts: dict) -> dict:
     for key, value in opts.items():
         if value is None:
             continue
+        if key == "background":
+            value = normalize_background(value)
         props["class" if key == "class_" else key] = value
     if props.get("animate") is False:
         props["animate"] = "none"
@@ -132,17 +147,36 @@ class Container:
 
     def hero(self, title: str, subtitle: Optional[str] = None, button: ButtonSpec = None, *,
              buttons: Optional[Iterable[ButtonSpec]] = None, badge: Optional[str] = None, image: Optional[str] = None,
-             background_image: Optional[str] = None, overlay: Optional[str] = None, align: str = "center",
-             full_height: bool = False, **opts: Any) -> "Container":
-        """Big header section. Wrap words in ``**double stars**`` to give them a gradient highlight."""
+             image_alt: str = "", background_image: Optional[str] = None, overlay: Optional[str] = None,
+             align: str = "center", full_height: bool = False, min_height: Union[int, str, None] = None,
+             **opts: Any) -> "Container":
+        """Big header section. Wrap words in ``**double stars**`` to give them a gradient highlight.
+
+        Background photo — short form::
+
+            site.hero("Title", background_image="beach.jpg", overlay="dark")
+
+        Full control::
+
+            site.hero("Title", background=Background(image="beach.jpg", position="center bottom",
+                                                     overlay="bottom", motion="kenburns", mobile_image="beach-m.jpg"))
+
+        Recommended sizes: background 2400×1350 (16:9), side ``image`` 1200×900 (4:3).
+        See ``webcraft.images.image_guide("hero_background")``."""
         all_buttons = [_button(button)] if button is not None else []
         for b in buttons or []:
             # Secondary buttons default to the outline style for a clear hierarchy.
             all_buttons.append(_button(b, default_style="outline" if all_buttons else None))
+        if background_image is not None:
+            if opts.get("background") is not None:
+                raise TypeError("Use either background_image= or background=, not both")
+            opts["background"] = Background(image=background_image, overlay=overlay or "dark", text="light")
+        elif overlay is not None:
+            raise TypeError("overlay= needs background_image= (or use Background(overlay=...))")
         return self._add("hero", {
             "title": title, "subtitle": subtitle, "buttons": all_buttons, "badge": badge, "image": image,
-            "background_image": background_image, "overlay": overlay, "full_height": full_height or None,
-            "align": align,
+            "image_alt": image_alt or None, "full_height": full_height or None, "align": align,
+            "min_height": f"{min_height}px" if isinstance(min_height, (int, float)) else min_height,
         }, opts)
 
     def section(self, title: Optional[str] = None, subtitle: Optional[str] = None, *,
@@ -195,10 +229,27 @@ class Container:
                                     "icon": icon}, opts)
 
     def image(self, src: str, alt: str = "", *, caption: Optional[str] = None, width: Union[int, str, None] = None,
-              rounded: bool = True, **opts: Any) -> "Container":
-        """Image from a URL or a local file (local files are copied into the build automatically)."""
-        return self._add("image", {"src": src, "alt": alt, "caption": caption, "width": width,
-                                   "rounded": None if rounded else False}, opts)
+              height: Union[int, str, None] = None, aspect: Optional[str] = None, fit: str = "cover",
+              position: Union[str, tuple, None] = None, link: Optional[str] = None, rounded: bool = True,
+              shadow: bool = True, **opts: Any) -> "Container":
+        """Image from a URL or a local file (local files are copied into the build automatically).
+
+        width/height  display size in px (or any CSS length); recommended file width = 2× display width
+        aspect        force a ratio, e.g. "16:9", "4:3", "1:1" (the image is cropped with ``fit="cover"``)
+        fit           "cover" (fill & crop) or "contain" (show everything)
+        position      which part stays visible when cropped: "top", "left center", (30, 70) ...
+        link          make the image clickable
+        """
+        if aspect is not None and not _valid_aspect(aspect):
+            raise ValueError(f"aspect must look like '16:9' (got {aspect!r})")
+        if fit not in ("cover", "contain", "fill", "none", "scale-down"):
+            raise ValueError("fit must be 'cover', 'contain', 'fill', 'none' or 'scale-down'")
+        pos = f"{position[0]}% {position[1]}%" if isinstance(position, (tuple, list)) else position
+        return self._add("image", {
+            "src": src, "alt": alt, "caption": caption, "width": width, "height": height, "aspect": aspect,
+            "fit": None if fit == "cover" else fit, "position": pos, "link": link,
+            "rounded": None if rounded else False, "shadow": None if shadow else False,
+        }, opts)
 
     def video(self, src: str, *, title: Optional[str] = None, subtitle: Optional[str] = None,
               poster: Optional[str] = None, **opts: Any) -> "Container":

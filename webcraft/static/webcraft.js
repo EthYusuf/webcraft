@@ -1,5 +1,5 @@
 /*!
- * WebCraft.js v0.1.0
+ * WebCraft.js v0.2.0
  * Declarative component library for building modern websites from a JSON spec.
  * Used standalone in the browser or driven by the `webcraft` Python package.
  * MIT License
@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const registry = Object.create(null);
 
   // ------------------------------------------------------------------
@@ -189,14 +189,162 @@
       if (t[key] != null) style.setProperty(THEME_VARS[key], String(t[key]));
     }
     style.setProperty('--wc-page-bg', t.background);
-    if (t.background_image) {
-      style.setProperty('--wc-page-bg', `${t.background_overlay ? `linear-gradient(${t.background_overlay}, ${t.background_overlay}), ` : ''}url("${t.background_image}") center / cover fixed, ${t.background_color}`);
-    }
+    // Legacy flat keys -> layered background
+    const layer = t.background_layer || (t.background_image
+      ? { image: t.background_image, overlay: t.background_overlay } : null);
+    mountPageBackground(layer);
     if (t.font) { loadFont(t.font); style.setProperty('--wc-font', fontStack(t.font)); }
     const heading = t.heading_font || t.font;
     if (heading) { loadFont(heading); style.setProperty('--wc-heading-font', fontStack(heading)); }
     if (t.dark != null) document.documentElement.classList.toggle('wc-dark', !!t.dark);
     return t;
+  }
+
+  // ------------------------------------------------------------------
+  // Background engine — colour / gradient / image layers, overlays,
+  // filters, mobile art direction, fixed, parallax and Ken Burns motion
+  // ------------------------------------------------------------------
+  const OVERLAYS = {
+    dark: 'rgba(2, 6, 23, 0.55)',
+    darker: 'rgba(2, 6, 23, 0.75)',
+    light: 'rgba(255, 255, 255, 0.68)',
+    top: 'linear-gradient(to bottom, rgba(2,6,23,.78) 0%, rgba(2,6,23,.2) 55%, rgba(2,6,23,0) 100%)',
+    bottom: 'linear-gradient(to top, rgba(2,6,23,.85) 0%, rgba(2,6,23,.25) 55%, rgba(2,6,23,0) 100%)',
+    vignette: 'radial-gradient(ellipse at center, rgba(2,6,23,0) 30%, rgba(2,6,23,.78) 100%)',
+    primary: 'color-mix(in srgb, var(--wc-primary) 72%, transparent)',
+    brand: 'linear-gradient(135deg, color-mix(in srgb, var(--wc-primary) 82%, transparent), color-mix(in srgb, var(--wc-secondary) 68%, transparent))',
+  };
+  const TEXT_COLORS = { light: '#f8fafc', dark: '#0f172a' };
+  const MOBILE_BREAKPOINT = 768;
+
+  function cssUrl(u) {
+    // Absolutise: a relative url() inside a CSS variable is resolved against the stylesheet
+    // that uses the variable (assets/webcraft.css), not against the page.
+    let abs = String(u);
+    try { abs = new URL(abs, document.baseURI).href; } catch (e) { /* keep as-is */ }
+    return `url("${abs.replace(/["\\]/g, '\\$&').replace(/[\n\r]/g, '')}")`;
+  }
+
+  /** Choose the best candidate of a "a.webp 640w, b.webp 1280w" srcset for a CSS width. */
+  function pickSrc(src, srcset, cssWidth) {
+    if (!srcset) return src;
+    const need = (cssWidth || window.innerWidth) * Math.min(window.devicePixelRatio || 1, 2);
+    const list = String(srcset).split(',')
+      .map((part) => { const [u, w] = part.trim().split(/\s+/); return { u, w: parseInt(w, 10) || 0 }; })
+      .filter((c) => c.u).sort((a, b) => a.w - b.w);
+    return (list.find((c) => c.w >= need) || list[list.length - 1] || { u: src }).u;
+  }
+
+  /** <img> attributes from a spec holder: src + optional srcset/sizes + intrinsic width/height (prevents layout shift). */
+  function imgAttrs(holder, key, sizes) {
+    const size = holder[`${key}_size`] || [];
+    const srcset = holder[`${key}_srcset`];
+    return {
+      src: holder[key], srcset: srcset || null, sizes: srcset ? sizes : null,
+      width: size[0] || null, height: size[1] || null, decoding: 'async',
+    };
+  }
+
+  function filterValue(bg) {
+    const f = [];
+    if (bg.blur) f.push(`blur(${bg.blur}px)`);
+    if (bg.brightness != null) f.push(`brightness(${bg.brightness})`);
+    if (bg.contrast != null) f.push(`contrast(${bg.contrast})`);
+    if (bg.saturate != null) f.push(`saturate(${bg.saturate})`);
+    if (bg.grayscale != null) f.push(`grayscale(${bg.grayscale})`);
+    return f.join(' ');
+  }
+
+  /**
+   * Paint a background onto `el`. `bg` is a CSS string or an object:
+   * { image, image_srcset, color, gradient, size, position, repeat, fixed, overlay, overlay_opacity,
+   *   blur, brightness, contrast, saturate, grayscale, mobile_image, mobile_position, min_height,
+   *   motion: 'parallax' | 'kenburns', parallax_speed, text: 'light' | 'dark' | colour, alt }
+   * Image and overlay live in their own layers, so filters never blur the content.
+   */
+  function applyBackground(el, bg, opts) {
+    opts = opts || {};
+    if (!bg) return el;
+    if (typeof bg === 'string') {
+      if (isCssImageOrGradient(bg)) el.style.background = bg; else el.style.backgroundColor = bg;
+      return el;
+    }
+    el.classList.add('wc-has-bg');
+    const media = h('div', {
+      class: 'wc-bg-media', 'aria-hidden': bg.alt ? null : 'true', role: bg.alt ? 'img' : null, 'aria-label': bg.alt || null,
+    });
+    const ms = media.style;
+    const width = window.innerWidth;
+    const layers = [];
+    if (bg.image) layers.push(cssUrl(pickSrc(bg.image, bg.image_srcset, width)));
+    if (bg.gradient) layers.push(bg.gradient);
+    if (layers.length) ms.setProperty('--wc-bg-img', layers.join(', '));
+    if (bg.mobile_image) {
+      media.classList.add('wc-bg-has-mobile');
+      ms.setProperty('--wc-bg-img-m', [cssUrl(pickSrc(bg.mobile_image, bg.mobile_image_srcset, Math.min(width, MOBILE_BREAKPOINT)))]
+        .concat(bg.gradient ? [bg.gradient] : []).join(', '));
+    }
+    if (bg.mobile_position) ms.setProperty('--wc-bg-pos-m', bg.mobile_position);
+    if (bg.color) ms.backgroundColor = bg.color;
+    ms.setProperty('--wc-bg-size', bg.size || 'cover');
+    ms.setProperty('--wc-bg-pos', bg.position || 'center');
+    ms.backgroundRepeat = bg.repeat || 'no-repeat';
+    const filter = filterValue(bg);
+    if (filter) ms.filter = filter;
+    if (bg.blur) ms.inset = `-${Math.ceil(bg.blur * 2)}px`; // hide the soft, transparent blur edges
+    if (bg.fixed && !opts.page) media.classList.add('wc-bg-fixed');
+    if (bg.motion === 'kenburns') media.classList.add('wc-bg-kenburns');
+    if (bg.motion === 'parallax' && !opts.page) {
+      media.classList.add('wc-bg-parallax');
+      media.dataset.wcParallax = String(bg.parallax_speed != null ? bg.parallax_speed : 0.35);
+    }
+    el.prepend(media);
+    if (bg.overlay) {
+      const overlay = h('div', { class: 'wc-bg-overlay', 'aria-hidden': 'true' });
+      overlay.style.background = OVERLAYS[bg.overlay] || bg.overlay;
+      if (bg.overlay_opacity != null) overlay.style.opacity = String(bg.overlay_opacity);
+      media.after(overlay);
+    }
+    if (bg.text) {
+      if (TEXT_COLORS[bg.text]) el.classList.add(`wc-on-${bg.text}`);
+      else el.style.color = bg.text;
+    }
+    if (bg.min_height) el.style.minHeight = bg.min_height;
+    return el;
+  }
+
+  function mountPageBackground(layer) {
+    if (typeof document === 'undefined' || !document.body) return;
+    const old = document.querySelector('body > .wc-page-bg');
+    if (old) old.remove();
+    if (!layer) return;
+    const holder = h('div', { class: 'wc-page-bg' });
+    applyBackground(holder, layer, { page: true });
+    holder.classList.remove('wc-on-light', 'wc-on-dark');
+    document.body.prepend(holder);
+  }
+
+  let parallaxBound = false;
+  function setupParallax() {
+    if (parallaxBound || !document.querySelector('.wc-bg-parallax')) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    parallaxBound = true;
+    let ticking = false;
+    const update = () => {
+      ticking = false;
+      const vh = window.innerHeight;
+      document.querySelectorAll('.wc-bg-parallax').forEach((media) => {
+        const rect = media.parentElement.getBoundingClientRect();
+        if (rect.bottom < -200 || rect.top > vh + 200) return;
+        const speed = parseFloat(media.dataset.wcParallax) || 0.35;
+        const offset = (rect.top + rect.height / 2 - vh / 2) * speed;
+        media.style.transform = `translate3d(0, ${(-offset).toFixed(1)}px, 0)`;
+      });
+    };
+    const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    update();
   }
 
   // ------------------------------------------------------------------
@@ -223,10 +371,7 @@
   function decorate(el, p) {
     if (p.id) el.id = p.id;
     if (p.class) el.classList.add(...String(p.class).split(/\s+/).filter(Boolean));
-    if (p.background) {
-      if (isCssImageOrGradient(p.background)) el.style.background = p.background;
-      else el.style.backgroundColor = p.background;
-    }
+    if (p.background) applyBackground(el, p.background);
     if (p.color) el.style.color = p.color;
     if (p.padding != null) {
       const pad = typeof p.padding === 'number' ? `${p.padding}px` : p.padding;
@@ -253,7 +398,7 @@
       (p.links || []).map((l) => h('a', { href: safeUrl(l.href) }, l.text)),
       p.cta ? button(p.cta, 'wc-btn-sm') : null);
     const logo = h('a', { class: 'wc-logo', href: safeUrl(p.logo_href || '#') },
-      p.logo_image ? h('img', { src: p.logo_image, alt: p.logo || 'logo' }) : null,
+      p.logo_image ? h('img', Object.assign(imgAttrs(p, 'logo_image', '200px'), { alt: p.logo || 'logo' })) : null,
       p.logo ? h('span', null, p.logo) : null);
     const bar = h('header', { class: `wc-navbar${p.sticky === false ? '' : ' wc-sticky'}${p.transparent ? ' wc-transparent' : ''}` });
     const toggle = h('button', {
@@ -277,15 +422,16 @@
       richEl('h1', p.title || '', 'wc-hero-title'),
       p.subtitle ? richEl('p', p.subtitle, 'wc-hero-subtitle') : null,
       p.buttons && p.buttons.length ? h('div', { class: 'wc-btn-row' }, p.buttons.map((b) => button(b))) : null);
-    const media = p.image ? h('div', { class: 'wc-hero-media' }, h('img', { src: p.image, alt: p.image_alt || '' })) : null;
+    const media = p.image ? h('div', { class: 'wc-hero-media' }, h('img', Object.assign(
+      imgAttrs(p, 'image', '(max-width: 960px) 100vw, 560px'), { alt: p.image_alt || '', fetchpriority: 'high' }))) : null;
     const hero = h('section', { class: `wc-hero wc-hero-${align}${media ? ' wc-hero-split' : ''}${p.full_height ? ' wc-hero-full' : ''}` },
       h('div', { class: 'wc-hero-glow', 'aria-hidden': 'true' }),
       container(h('div', { class: 'wc-hero-grid' }, content, media)));
-    if (p.background_image) {
-      const overlay = p.overlay || 'rgba(0,0,0,0.55)';
-      hero.style.background = `linear-gradient(${overlay}, ${overlay}), url("${p.background_image}") center / cover`;
-      hero.classList.add('wc-hero-photo');
+    if (p.background_image && !p.background) {
+      // Legacy shorthand -> layered background (decorate() paints it).
+      p.background = { image: p.background_image, overlay: p.overlay || 'dark', text: 'light' };
     }
+    if (p.min_height) hero.style.minHeight = p.min_height;
     hero.dataset.wcDefaultAnim = 'fade-up';
     return hero;
   });
@@ -309,9 +455,23 @@
     return el;
   });
 
-  register('image', (p) => block(h('figure', { class: `wc-figure${p.rounded === false ? '' : ' wc-rounded'}` },
-    h('img', { src: p.src, alt: p.alt || '', loading: 'lazy', style: p.width ? { maxWidth: typeof p.width === 'number' ? `${p.width}px` : p.width } : null }),
-    p.caption ? richEl('figcaption', p.caption) : null)));
+  const cssLen = (v) => (typeof v === 'number' ? `${v}px` : v);
+
+  register('image', (p) => {
+    const sizes = p.width
+      ? `(max-width: ${parseInt(p.width, 10) || 1160}px) 100vw, ${cssLen(p.width)}`
+      : '(max-width: 1160px) 100vw, 1112px';
+    const img = h('img', Object.assign(imgAttrs(p, 'src', sizes), { alt: p.alt || '', loading: 'lazy' }));
+    const st = img.style;
+    if (p.width) st.maxWidth = cssLen(p.width);
+    if (p.aspect) st.aspectRatio = String(p.aspect).replace(/[:/]/, ' / ');
+    if (p.height) st.height = cssLen(p.height);
+    if (p.aspect || p.height || p.fit) st.objectFit = p.fit || 'cover';
+    if (p.position) st.objectPosition = p.position;
+    const media = p.link ? h('a', { href: safeUrl(p.link), class: 'wc-figure-link' }, img) : img;
+    return block(h('figure', { class: `wc-figure${p.rounded === false ? '' : ' wc-rounded'}${p.shadow === false ? ' wc-no-shadow' : ''}` },
+      media, p.caption ? richEl('figcaption', p.caption) : null));
+  });
 
   register('video', (p) => {
     let src = String(p.src || '');
@@ -323,7 +483,7 @@
     if (yt || vimeo) {
       media = h('iframe', { src, title: p.title || 'video', allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture', allowfullscreen: true, loading: 'lazy' });
     } else {
-      media = h('video', { src, controls: true, playsinline: true, poster: p.poster });
+      media = h('video', { src, controls: true, playsinline: true, preload: 'metadata', poster: p.poster || null });
     }
     return block(sectionHeader(p), h('div', { class: 'wc-video' }, media));
   });
@@ -333,7 +493,7 @@
     h('div', { class: 'wc-grid', style: gridStyle(p.columns || 3) }, (p.items || []).map((it, i) => h('article', {
       class: 'wc-card wc-feature', style: { '--wc-i': i },
     },
-    it.image ? h('img', { class: 'wc-card-img', src: it.image, alt: it.title || '', loading: 'lazy' }) : null,
+    it.image ? h('img', Object.assign(imgAttrs(it, 'image', '(max-width: 760px) 100vw, 380px'), { class: 'wc-card-img', alt: it.title || '', loading: 'lazy' })) : null,
     it.icon ? h('div', { class: 'wc-feature-icon' }, it.icon) : null,
     it.title ? richEl('h3', it.title) : null,
     it.text ? richEl('p', it.text, 'wc-muted') : null,
@@ -350,8 +510,8 @@
     sectionHeader(p),
     h('div', { class: 'wc-gallery', style: gridStyle(p.columns || 3) }, (p.images || []).map((img) => {
       if (typeof img === 'string') img = { src: img };
-      return h('a', { class: 'wc-gallery-item', href: img.src, target: '_blank', rel: 'noopener' },
-        h('img', { src: img.src, alt: img.alt || '', loading: 'lazy' }),
+      return h('a', { class: 'wc-gallery-item', href: safeUrl(img.src), target: '_blank', rel: 'noopener' },
+        h('img', Object.assign(imgAttrs(img, 'src', '(max-width: 760px) 100vw, 380px'), { alt: img.alt || img.caption || '', loading: 'lazy' })),
         img.caption ? h('span', { class: 'wc-gallery-caption' }, img.caption) : null);
     }))));
 
@@ -362,7 +522,7 @@
       richEl('blockquote', t.quote || ''),
       h('figcaption', null,
         t.avatar
-          ? h('img', { class: 'wc-avatar', src: t.avatar, alt: t.name || '' })
+          ? h('img', Object.assign(imgAttrs(t, 'avatar', '46px'), { class: 'wc-avatar', alt: t.name || '', loading: 'lazy' }))
           : h('span', { class: 'wc-avatar wc-avatar-initials' }, (t.name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('')),
         h('div', null, h('strong', null, t.name || ''), t.role ? h('span', { class: 'wc-muted' }, t.role) : null)))))));
 
@@ -516,6 +676,7 @@
     mount.innerHTML = '';
     mount.appendChild(page);
     setupBehaviours(page);
+    setupParallax();
     document.documentElement.classList.add('wc-ready');
     return page;
   }
@@ -529,7 +690,10 @@
         Object.assign(spec.theme, typeof nameOrObj === 'string' ? { preset: nameOrObj } : nameOrObj);
         return api;
       },
-      background(value) { spec.theme.background = value; return api; },
+      background(value) {
+        if (value && typeof value === 'object') spec.theme.background_layer = value; else spec.theme.background = value;
+        return api;
+      },
       font(name, headingFont) { spec.theme.font = name; if (headingFont) spec.theme.heading_font = headingFont; return api; },
       colors(obj) { Object.assign(spec.theme, obj); return api; },
       add(type, props, extra) { spec.components.push(Object.assign({ type, props: props || {} }, extra)); return api; },
@@ -553,8 +717,9 @@
   }
 
   const WebCraft = {
-    version: VERSION, themes, register, render, renderComponent, applyTheme, resolveTheme, site, auto,
-    utils: { h, rich, escapeHtml, safeUrl, button, block, container, sectionHeader },
+    version: VERSION, themes, overlays: OVERLAYS, register, render, renderComponent, applyTheme, resolveTheme,
+    applyBackground, site, auto,
+    utils: { h, rich, escapeHtml, safeUrl, button, block, container, sectionHeader, pickSrc, imgAttrs },
     get components() { return Object.keys(registry); },
   };
 

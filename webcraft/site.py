@@ -6,10 +6,14 @@ import json
 import os
 import webbrowser
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
-from .builder import build_site, render_page
+from .background import Background
+from .builder import build_site, collect_image_reports, render_page
 from .components import Container
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .builder import SiteImageReport
 
 THEMES = ("light", "dark", "ocean", "sunset", "forest", "midnight", "minimal")
 
@@ -55,10 +59,24 @@ class Site(Page):
     """
 
     def __init__(self, title: str = "WebCraft Site", *, theme: Union[str, dict] = "light", lang: str = "tr",
-                 description: Optional[str] = None, favicon: Optional[str] = None) -> None:
+                 description: Optional[str] = None, favicon: Optional[str] = None, og_image: Optional[str] = None,
+                 url: Optional[str] = None, theme_color: Optional[str] = None) -> None:
+        """
+        title        page title (browser tab, search results)
+        theme        preset name or dict of theme values
+        lang         HTML language and the language of build reports ("tr" or "en")
+        description  meta description for search engines and link previews
+        favicon      tab icon — 512×512 PNG or SVG recommended
+        og_image     link preview image for WhatsApp/X/LinkedIn — 1200×630 px recommended
+        url          public address of the site (enables absolute og:image and canonical links)
+        theme_color  colour of the mobile browser bar
+        """
         self._theme: dict[str, Any] = {}
         self.lang = lang
         self.favicon = favicon
+        self.og_image = og_image
+        self.url = url.rstrip("/") if url else None
+        self.theme_color = theme_color
         self.head_html: list[str] = []
         self.pages: dict[str, Page] = {}
         super().__init__(self, "index", title, description)
@@ -91,18 +109,47 @@ class Site(Page):
         self._theme.update({k: v for k, v in overrides.items() if v is not None})
         return self
 
-    def background(self, value: Optional[str] = None, *, image: Optional[str] = None,
-                   overlay: Optional[str] = None, color: Optional[str] = None) -> "Site":
-        """Page background: a colour (``"#101010"``), any CSS gradient, or ``image=`` a picture.
+    def background(self, value: Union[str, Background, None] = None, *, image: Optional[str] = None,
+                   color: Optional[str] = None, **layer: Any) -> "Site":
+        """Page background.
 
-        ``overlay`` darkens/tints an image, e.g. ``"rgba(0,0,0,.5)"``.
-        ``color`` is the solid fallback used behind gradients and by the navbar."""
+        Colour or gradient::
+
+            site.background("#0b1120")
+            site.background("linear-gradient(135deg, #667eea, #764ba2)")
+
+        Picture (recommended 2560×1440 px, 16:9, ≤ 450 KB — see ``image_guide("page_background")``)::
+
+            site.background(image="city.jpg", overlay="dark", blur=3, position="center bottom",
+                            mobile_image="city-portrait.jpg")
+
+        Extra keyword options are the :class:`~webcraft.Background` fields: size, position, repeat,
+        fixed, overlay, overlay_opacity, blur, brightness, contrast, saturate, grayscale,
+        mobile_image, mobile_position, motion, parallax_speed, text, focus.
+        ``color`` is the solid fallback shown behind images/gradients and used by the navbar."""
+        if isinstance(value, Background):
+            layer_obj = value
+        elif image is not None or layer:
+            layer_obj = Background(image=image, color=color, gradient=value, **layer)
+        else:
+            layer_obj = None
+        if layer_obj is not None:
+            data = layer_obj.to_dict()
+            if layer_obj.image:
+                self._theme["background_layer"] = data
+                self._theme.pop("background_image", None)
+            else:
+                self._theme.pop("background_layer", None)
+            if layer_obj.gradient:
+                self._theme["background"] = layer_obj.gradient
+            if layer_obj.color:
+                self._theme["background_color"] = layer_obj.color
+            if layer_obj.text:
+                self._theme["text"] = {"light": "#f8fafc", "dark": "#0f172a"}.get(layer_obj.text, layer_obj.text)
+            return self
         if value is not None:
             self._theme["background"] = value
-        if image is not None:
-            self._theme["background_image"] = image
-        if overlay is not None:
-            self._theme["background_overlay"] = overlay
+            self._theme.pop("background_layer", None)
         if color is not None:
             self._theme["background_color"] = color
         return self
@@ -154,10 +201,27 @@ class Site(Page):
     def to_json(self, indent: Optional[int] = 2) -> str:
         return json.dumps({name: p.to_dict() for name, p in self.pages.items()}, indent=indent, ensure_ascii=False)
 
-    def build(self, out_dir: Union[str, os.PathLike] = "dist", *, inline: bool = False) -> Path:
-        """Write every page to ``out_dir``. With ``inline=True`` each page is a single
-        self-contained HTML file (CSS and JS embedded). Returns the path of ``index.html``."""
-        return build_site(self, Path(out_dir), inline=inline)
+    def build(self, out_dir: Union[str, os.PathLike] = "dist", *, inline: bool = False,
+              optimize_images: bool = False, check_images: bool = True, strict: bool = False,
+              check_remote: bool = False, quiet: bool = False) -> Path:
+        """Write every page to ``out_dir`` and return the path of ``index.html``.
+
+        inline           one self-contained HTML file per page (CSS/JS embedded)
+        optimize_images  crop, compress and create responsive WebP variants (needs Pillow)
+        check_images     analyse every image against the slot it is used in and print a report
+        strict           raise :class:`ImageQualityError` if any image has an error (CI usage)
+        check_remote     also download the headers of http(s) images to analyse them
+        quiet            don't print the report
+        """
+        return build_site(self, Path(out_dir), inline=inline, optimize_images=optimize_images,
+                          check_images=check_images, strict=strict, check_remote=check_remote, quiet=quiet)
+
+    def image_report(self, *, check_remote: bool = False) -> "SiteImageReport":
+        """Analyse every image used on the site against its placement — without building.
+
+            print(site.image_report())
+        """
+        return collect_image_reports(self, check_remote=check_remote)
 
     def preview(self, out_dir: Union[str, os.PathLike] = "dist") -> Path:
         """Build and open the home page in the default browser (no server needed)."""
@@ -183,5 +247,6 @@ class Site(Page):
     kose = radius
     genislik = width
     olustur = build
+    resim_raporu = image_report
     onizle = preview
     yayinla = serve

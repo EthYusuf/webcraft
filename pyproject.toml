@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "webcraft"
-version = "0.1.0"
+version = "0.2.0"
 description = "Build professional websites with simple Python commands, powered by the WebCraft.js component library."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -19,6 +19,10 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+images = ["pillow>=10"]
+dev = ["pytest>=7", "pillow>=10"]
+
 [project.urls]
 Homepage = "https://github.com/EthYusuf/webcraft"
 
@@ -26,7 +30,7 @@ Homepage = "https://github.com/EthYusuf/webcraft"
 webcraft = "webcraft.cli:main"
 
 [tool.setuptools]
-packages = ["webcraft"]
+packages = ["webcraft", "webcraft.images"]
 
 [tool.setuptools.package-data]
 webcraft = ["static/*"]

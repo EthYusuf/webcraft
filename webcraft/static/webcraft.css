@@ -1,5 +1,5 @@
 /*!
- * WebCraft.css v0.1.0 — styles for WebCraft.js components
+ * WebCraft.css v0.2.0 — styles for WebCraft.js components
  * MIT License
  */
 
@@ -41,6 +41,7 @@ body {
 }
 
 img, video, iframe { max-width: 100%; display: block; }
+img, video { height: auto; }
 
 a { color: var(--wc-primary); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
@@ -151,9 +152,6 @@ h3.wc-heading { font-size: 1.6rem; }
     radial-gradient(35% 45% at 75% 25%, color-mix(in srgb, var(--wc-secondary) 18%, transparent), transparent 70%);
   filter: blur(20px);
 }
-.wc-hero-photo .wc-hero-glow { display: none; }
-.wc-hero-photo { color: #fff; }
-.wc-hero-photo .wc-hero-subtitle { color: rgb(255 255 255 / 0.85); }
 .wc-hero-grid { display: grid; gap: 56px; align-items: center; }
 .wc-hero-split .wc-hero-grid { grid-template-columns: 1.1fr 1fr; }
 .wc-hero-center { text-align: center; }
@@ -321,6 +319,65 @@ h3.wc-heading { font-size: 1.6rem; }
 }
 .wc-socials a:hover { color: #fff; background: var(--wc-primary); border-color: var(--wc-primary); transform: translateY(-2px); }
 .wc-copyright { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--wc-border); color: var(--wc-muted); font-size: 0.88rem; text-align: center; }
+
+/* ---------- Background layers ---------- */
+.wc-has-bg { position: relative; isolation: isolate; overflow: hidden; }
+.wc-bg-media, .wc-bg-overlay { position: absolute; inset: 0; pointer-events: none; }
+.wc-bg-media {
+  z-index: -2;
+  background-image: var(--wc-bg-img, none);
+  background-size: var(--wc-bg-size, cover);
+  background-position: var(--wc-bg-pos, center);
+  background-repeat: no-repeat;
+}
+.wc-bg-overlay { z-index: -1; }
+.wc-bg-fixed { background-attachment: fixed; }
+.wc-bg-parallax { inset: -25% 0; will-change: transform; }
+.wc-bg-kenburns { animation: wc-kenburns 28s ease-in-out infinite alternate; transform-origin: 60% 40%; will-change: transform; }
+@keyframes wc-kenburns { from { transform: scale(1); } to { transform: scale(1.14) translate(-1.5%, -1%); } }
+.wc-page-bg { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.wc-has-bg > .wc-hero-glow { display: none; }
+
+/* Readable text on photos: re-map the theme tokens inside the element */
+.wc-on-light {
+  color: #f8fafc;
+  --wc-text: #f8fafc; --wc-muted: rgb(248 250 252 / 0.8);
+  --wc-border: rgb(255 255 255 / 0.18); --wc-surface: rgb(255 255 255 / 0.08);
+}
+.wc-on-light .wc-hero-title, .wc-on-light h1, .wc-on-light h2 { text-shadow: 0 2px 24px rgb(0 0 0 / 0.35); }
+/* Gradient highlight on photos: lighter colours + drop-shadow (text-shadow would bleed through clipped text) */
+.wc-on-light .wc-hero-title strong {
+  background-image: linear-gradient(120deg, color-mix(in srgb, var(--wc-primary) 45%, #fff), color-mix(in srgb, var(--wc-secondary) 45%, #fff));
+  text-shadow: none;
+  filter: drop-shadow(0 2px 14px rgb(0 0 0 / 0.45));
+}
+.wc-on-light .wc-btn-outline { color: #fff; border-color: rgb(255 255 255 / 0.45); }
+.wc-on-light .wc-btn-outline:hover { color: #fff; border-color: #fff; background: rgb(255 255 255 / 0.1); }
+.wc-on-light .wc-card { backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.wc-on-dark {
+  color: #0f172a;
+  --wc-text: #0f172a; --wc-muted: rgb(15 23 42 / 0.72);
+  --wc-border: rgb(15 23 42 / 0.14); --wc-surface: rgb(255 255 255 / 0.7);
+}
+
+/* Image component extras */
+.wc-figure-link { display: block; }
+.wc-figure-link img { transition: transform 0.4s var(--wc-ease), box-shadow 0.4s var(--wc-ease); }
+.wc-figure-link:hover img { transform: translateY(-3px); box-shadow: var(--wc-shadow-lg); }
+.wc-no-shadow img { box-shadow: none !important; }
+
+@media (max-width: 768px) {
+  .wc-bg-has-mobile { background-image: var(--wc-bg-img-m); }
+  .wc-bg-media { background-position: var(--wc-bg-pos-m, var(--wc-bg-pos, center)); }
+}
+/* Fixed backgrounds are janky/unsupported on touch devices — fall back to normal scrolling */
+@media (hover: none), (max-width: 768px) {
+  .wc-bg-fixed { background-attachment: scroll; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wc-bg-kenburns { animation: none; }
+  .wc-bg-parallax { transform: none !important; inset: 0; }
+}
 
 /* ---------- Animations ---------- */
 [data-wc-animate] { transition: opacity 0.8s var(--wc-ease), transform 0.8s var(--wc-ease); }
