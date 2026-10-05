@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webcraft"
+version = "0.1.0"
+description = "Build professional websites with simple Python commands, powered by the WebCraft.js component library."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "EthYusuf" }]
+keywords = ["website", "static-site", "html", "web", "builder", "javascript"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Internet :: WWW/HTTP :: Site Management",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/EthYusuf/webcraft"
+
+[project.scripts]
+webcraft = "webcraft.cli:main"
+
+[tool.setuptools]
+packages = ["webcraft"]
+
+[tool.setuptools.package-data]
+webcraft = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
